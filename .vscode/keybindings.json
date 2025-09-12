@@ -1,0 +1,14 @@
+[
+  {
+    "key": "ctrl+alt+y",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Sincronizar novo script",
+    "when": "workspaceFolderCount > 0 && !isMac"
+  },
+  {
+    "key": "cmd+alt+y",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Sincronizar novo script",
+    "when": "workspaceFolderCount > 0 && isMac"
+  }
+]

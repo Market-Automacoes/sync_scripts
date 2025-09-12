@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Sincronizar novo script",
+      "type": "shell",
+      "osx":   { "command": "./src/run_sync.sh" },
+      "linux": { "command": "./src/run_sync.sh" },
+      "windows": {
+        "command": ".\\src\\run_sync_windows.cmd",
+        "options": {
+          "shell": {
+            "executable": "C:\\Windows\\System32\\cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

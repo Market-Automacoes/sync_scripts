@@ -1,0 +1,72 @@
+# Sync_Scripts – .gitignore
+
+########################################
+# Segredos e configs locais
+########################################
+config.ini
+
+########################################
+# SVN (working copy e configs) – agora em src/
+########################################
+src/Scripts/                 # WC completa do SVN (obtida do TortoiseSVN/CLI)
+src/.svnconfig_noproxy/
+src/.preprocess_backup/
+src/.target_*.txt
+
+# (caso alguém ainda tenha a WC antiga na raiz, manter ignorado)
+Scripts/
+
+########################################
+# Python
+########################################
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+.cache/
+dist/
+build/
+site/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Ambientes virtuais (venv local na RAIZ do projeto)
+.venv/
+venv/
+env/
+ENV/
+
+########################################
+# Logs / temporários
+########################################
+*.log
+logs/
+*.tmp
+tmp/
+
+########################################
+# SO / arquivos de sistema
+########################################
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+*.swp
+*~
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+########################################
+# IDEs/editores
+########################################
+# .vscode é mantido no repositório (tasks.json, keybindings, etc.)
+# (não ignore .vscode/)
