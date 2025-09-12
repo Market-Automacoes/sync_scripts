@@ -1,230 +1,193 @@
-# Sync_Scripts
+# Sync Scripts
 
-Automação para **gerar, validar e versionar** scripts SQL dos sistemas **Gestor** e **Supervisor** usando **SVN** (Subversion/TortoiseSVN) e **PostgreSQL**, com integração ao **VS Code** e *rollback* automático em caso de falhas.
+Automatiza a criação, validação e versionamento de **scripts SQL** para os sistemas **Gestor** e **Supervisor**, sincronizando com um repositório **SVN** e garantindo que os scripts sejam **testados** em bases PostgreSQL antes de serem enviados.
 
-> **Fluxo resumido:** você cria `gestor.sql` ou `supervisor.sql` na **raiz** → a pipeline trata e **numera** → aplica os scripts em **bancos de teste/dev** → cria o arquivo numerado em `src/Scripts/<Sistema>/` → faz **commit** no SVN. Se algo falhar, o arquivo original é **restaurado** do backup.
+> Pasta raiz do projeto (local): **Sync_Scrips/**  
+> Principais scripts de automação ficam em **Sync_Scrips/src/**
 
 ---
 
-## 📂 Estrutura do projeto
+## Como funciona (resumo do fluxo)
+
+1. Você cria **um arquivo na raiz** do projeto:
+   - `gestor.sql` → será tratado e numerado como `NNNN.0.GXX.sql`
+   - `supervisor.sql` → será tratado e numerado como `NNNN.0.SXX.sql`  
+   (onde `NNNN` é sequencial e `XX` são suas iniciais em **[user].initials**)
+2. Rode a *task* do VS Code **“Sincronizar novo script”** (ou execute manualmente `./src/run_sync.sh` no macOS/Linux ou `.\src\run_sync_windows.cmd` no Windows).
+3. O pipeline executa, **nessa ordem**:
+   - `sync_svn.py`: faz checkout/update de `src/Scripts` a partir do SVN.
+   - `preprocess_sql.py`: trata o arquivo (`*.sql` da raiz), gera cabeçalho, delimita comandos por `---------- END OFF COMMAND ----------`, converte para **ANSI (cp1252)** e cria um **backup** do seu arquivo de origem.
+   - `apply_db_updates.py`: lê `config.ini`, aplica pendências do diretório `Scripts/<Sistema>` nas bases **TEST** e **DEV** e executa o **novo** script completo em TEST. Em DEV, roda somente `select * from sistema.fn_atualiza_script('<ID>')`.
+   - `post_sync_sql.py`: grava o arquivo numerado em `src/Scripts/<Sistema>/NNNN.0.[GS]XX.sql`, **adiciona/commita no SVN** (se houver WC) e **remove os arquivos de origem** da raiz. Em caso de falha, `restore_backups.py` restaura seu `gestor.sql/supervisor.sql` original.
+4. Pronto! O arquivo numerado estará no repositório SVN e as bases alinhadas.
+
+---
+
+## Estrutura do projeto
 
 ```
 Sync_Scrips/
-├─ config.ini                  # Configurações (NÃO versionar com credenciais reais)
+├─ config.ini                 # Configurações locais (não versionar)
 ├─ .gitignore
-├─ gestor.sql                  # (opcional) entrada para o sistema Gestor
-├─ supervisor.sql              # (opcional) entrada para o sistema Supervisor
+├─ gestor.sql                 # (opcional) arquivo de entrada do Gestor
+├─ supervisor.sql             # (opcional) arquivo de entrada do Supervisor
 ├─ .vscode/
-│  └─ tasks.json               # Task do VS Code (macOS/Windows)
+│  └─ tasks.json              # Task “Sincronizar novo script”
 └─ src/
-   ├─ Scripts/                 # Working copy do SVN
-   │  ├─ Gestor/
-   │  └─ Supervisor/
-   ├─ .svnconfig_noproxy/      # Config SVN sem proxy (gerado automaticamente)
-   ├─ .preprocess_backup/      # Backups automáticos dos *.sql de entrada
-   ├─ run_sync.sh              # Pipeline (macOS/Linux)
-   ├─ run_sync_windows.cmd     # Pipeline (Windows)
-   ├─ sync_svn.py              # 1) Sincroniza WC do SVN
-   ├─ preprocess_sql.py        # 2) Trata/numera/cabeçalho/separadores/ANSI
-   ├─ apply_db_updates.py      # 3) TEST completo; DEV apenas marca via função
-   ├─ post_sync_sql.py         # 4) Cria numerado + commit + limpeza/rollback
-   └─ restore_backups.py       # Restauração manual de backups, se preciso
+   └─ Scripts/
+      ├─ Gestor/              # Working copy do SVN (conteúdo versionado)
+      └─ Supervisor/          # Working copy do SVN (conteúdo versionado)
+   ├─ run_sync.sh
+   ├─ run_sync_windows.cmd
+   ├─ sync_svn.py
+   ├─ preprocess_sql.py
+   ├─ apply_db_updates.py
+   ├─ post_sync_sql.py
+   ├─ restore_backups.py
 ```
 
-> **Importante:** crie **apenas** `gestor.sql` ou `supervisor.sql` na raiz. **Não edite** diretamente os numerados em `src/Scripts/...` — eles são gerados pela pipeline.
-
 ---
 
-## 🔧 O que cada etapa faz
-
-1. **`sync_svn.py`**  
-   Atualiza/baixa a working copy do SVN em `src/Scripts/` a partir de `SVN_URL`.
-
-2. **`preprocess_sql.py`**  
-   - Faz **backup** do arquivo de entrada (`src/.preprocess_backup/…`).  
-   - Descobre o próximo número **sequencial** (ex.: `9342.0.GJO.sql` ou `0690.0.SJO.sql`).  
-   - Gera **cabeçalho** com Autor, Data+IP e Sistema.  
-   - Adiciona no topo:  
-     `select * from sistema.fn_verifica_script('<ID>');` (**sem** `.sql`)  
-   - Separa cada comando com `---------- END OFF COMMAND ----------` **sem duplicar separadores vazios**.  
-   - Adiciona no final:  
-     `select * from sistema.fn_atualiza_script('<ID>');` (**sem** `.sql`)  
-   - Salva o arquivo de entrada em **ANSI (cp1252)**.  
-   - Cria `.target_<sistema>.txt` com o `<ID>` (ex.: `9342.0.GJO`).
-
-3. **`apply_db_updates.py`**  
-   - Lê pares de conexões **TEST/DEV** por sistema (**Gestor** e/ou **Supervisor**).  
-   - **Aplica pendências** dos diretórios `src/Scripts/<Sistema>/` até a última versão disponível (usando os separadores para rodar por blocos).  
-   - Executa o **novo script completo** em **TEST**.  
-   - Em **DEV**, executa **apenas**: `select * from sistema.fn_atualiza_script('<ID>');` (sem `.sql`).  
-   - Se qualquer execução falhar, interrompe e permite **rollback** do arquivo de entrada a partir do backup.
-
-4. **`post_sync_sql.py`**  
-   - Gera o arquivo **numerado final** em `src/Scripts/<Sistema>/` com o conteúdo tratado (ANSI).  
-   - Faz `svn add` e `svn commit` (se `src/Scripts` for uma working copy).  
-   - **Sucesso:** remove `gestor.sql`/`supervisor.sql` da raiz e **limpa** os backups pendentes.  
-   - **Falha:** restaura automaticamente o arquivo original da raiz a partir do backup.
-
-> A pasta `src/.svnconfig_noproxy/` é criada automaticamente e **força exceção de proxy** para endereços locais (ex.: `192.168.*`).
-
----
-
-## ✅ Pré‑requisitos
+## Pré‑requisitos
 
 ### Comuns
-- Acesso ao **SVN** (URL + credenciais).  
-- Acesso às **bases PostgreSQL** (TEST/DEV para cada sistema).  
-- **Python 3.9+**.
+- **Acesso ao repositório SVN** (“TortoiseSVN/Subversion”). Peça **usuário e senha** ao administrador do repositório.
+- **PostgreSQL cliente** não é necessário localmente; o acesso é via rede.
+- **Python 3.9+** (recomendado 3.10+).
+- Pacote Python: `psycopg` (psycopg3, binário).
 
-### macOS (Sequoia ou superior)
-- **SVN (Subversion)**: `brew install subversion`  
-- **Python** (se necessário): `brew install python`  
-- **Pacotes Python**:
+### macOS
+- **Subversion (svn)**: `brew install subversion`
+- Criar e usar ambiente virtual (opcional, recomendado):
   ```bash
+  cd Sync_Scrips
+  python3 -m venv .venv
+  source .venv/bin/activate
   python3 -m pip install --upgrade pip
   python3 -m pip install "psycopg[binary]"
   ```
-- **Permissão de execução** (uma vez):
+- Dar permissão de execução ao script:
   ```bash
-  chmod +x src/run_sync.sh
+  chmod +x ./src/run_sync.sh
   ```
 
-### Windows 11
-- **Python 3.9+** (ativar “Add Python to PATH” no instalador).
-- **SVN CLI** (TortoiseSVN com “command line tools” ou `choco install svn`).
-- **Pacotes Python**:
-  ```bat
-  py -3 -m pip install --upgrade pip
-  py -3 -m pip install "psycopg[binary]"
-  ```
+### Windows (passo a passo do Python + PATH)
+1. Baixe o **Windows installer (64-bit)** em: https://www.python.org/downloads/windows/
+2. Execute o instalador e **marque** a opção **“Add python.exe to PATH”** na primeira tela.
+3. Clique em **Customize installation** (opcional) e mantenha **pip** selecionado. Conclua a instalação.
+4. Feche e **reabra** o Prompt/PowerShell.
+5. Verifique:
+   ```bat
+   python --version
+   pip --version
+   ```
+   Se **python** não for reconhecido, adicione manualmente ao **PATH** (variáveis de ambiente do Windows):
+   - Usuário (ou Sistema) → *Path* → **Editar** → **Novo** e inclua, ajustando a sua versão:
+     ```
+     %LocalAppData%\Programs\Python\Python312\
+     %LocalAppData%\Programs\Python\Python312\Scripts\
+     ```
+     (ou `C:\Users\<seu-usuario>\AppData\Local\Programs\Python\Python312\`).
+6. Instale dependências no projeto (opcional: use venv):
+   ```bat
+   cd Sync_Scrips
+   python -m venv .venv
+   .venv\Scripts\activate
+   python -m pip install --upgrade pip
+   python -m pip install "psycopg[binary]"
+   ```
+7. **SVN no Windows** (necessário `svn.exe` no PATH):
+   - Instale o **TortoiseSVN** e selecione **“Command line client tools”** durante a instalação, **ou**
+   - Instale **Subversion** via pacote que inclua o cliente de linha de comando.
+   - Verifique:
+     ```bat
+     svn --version
+     ```
 
 ---
 
-## 🧪 Ambiente virtual (`.venv` na raiz)
+## Configuração (`config.ini`)
 
-Crie o **.venv** na **raiz do projeto** (não dentro de `src/`). O script `src/run_sync.sh` tenta ativá‑lo automaticamente.
+> **Todos os campos são obrigatórios.** Mantenha este arquivo **fora do Git** (já está no `.gitignore`).  
+> Peça credenciais do SVN ao administrador do repositório.
 
-**macOS/Linux:**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install "psycopg[binary]"
-```
-
-**Windows (PowerShell):**
-```ps1
-py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-py -3 -m pip install --upgrade pip
-py -3 -m pip install "psycopg[binary]"
-```
-
----
-
-## ⚙️ Configuração (`config.ini`)
-
-> **Todos os campos são obrigatórios.**  
-> Os dados do repositório SVN (URL, usuário, senha) devem ser solicitados ao **administrador**.
-
-### Modelo em branco (copiar/colar)
-
-```ini
-[svn]
-url = 
-
-[auth]
-svn_username = 
-svn_password = 
-
-[user]
-author_name = 
-initials    = 
-
-[db_test_gestor]
-host = 
-port = 5432
-dbname = 
-user = 
-password = 
-
-[db_dev_gestor]
-host = 
-port = 5432
-dbname = 
-user = 
-password = 
-
-[db_test_supervisor]
-host = 
-port = 5432
-dbname = 
-user = 
-password = 
-
-[db_dev_supervisor]
-host = 
-port = 5432
-dbname = 
-user = 
-password = 
-```
-
-### Exemplo preenchido (valores fictícios)
-
+**Exemplo (copie/cole e ajuste os valores):**
 ```ini
 [svn]
 url = http://192.168.60.160/svn/repo/Scripts
 
 [auth]
-svn_username = seu_usuario
-svn_password = sua_senha
+svn_username = Nome
+svn_password = Senha
 
 [user]
-author_name = Seu Nome Sobrenome
-initials    = AB
+initials    = NO
+author_name = Nome completo
 
+# === Conexões para GESTOR ===
 [db_test_gestor]
-host = 192.168.60.10
+host = 192.168.60.162
 port = 5432
-dbname = gestor_test
+dbname = dbNome
 user = postgres
-password = secret
+password = senha
 
 [db_dev_gestor]
-host = 192.168.60.11
+host = 192.168.60.162
 port = 5432
-dbname = gestor_dev
+dbname = dbnome_dev
 user = postgres
-password = secret
+password = senha
 
+# === Conexões para SUPERVISOR ===
 [db_test_supervisor]
-host = 192.168.60.12
+host = 192.168.60.162
 port = 5432
-dbname = supervisor_test
+dbname = dbnome
 user = postgres
-password = secret
+password = senha
 
 [db_dev_supervisor]
-host = 192.168.60.13
+host = 192.168.60.162
 port = 5432
-dbname = supervisor_dev
+dbname = debnome_dev
 user = postgres
-password = secret
+password = senha
 ```
+
+**Observações importantes**
+- `[user].initials` deve ter **2 letras** (ex.: `JO`). Aparece no nome do arquivo `NNNN.0.[GS]XX.sql`.
+- O sistema (`Gestor` ou `Supervisor`) é deduzido pelo **nome do arquivo de entrada** na raiz: `gestor.sql` ou `supervisor.sql`.
+- Os scripts são salvos **em ANSI (cp1252)** após o tratamento.
 
 ---
 
-## ▶️ Como usar
+## VS Code – Execução via Task
 
-### VS Code (recomendado)
-- Abra a pasta **Sync_Scrips** no VS Code.
-- Use a task **“Sincronizar novo script”** (já incluída em `.vscode/tasks.json`):  
-  - **macOS/Linux:** roda `./src/run_sync.sh`  
-  - **Windows:** roda `.\src\run_sync_windows.cmd`  
-- Saída aparece no terminal integrado. Em falhas, o backup do arquivo de entrada é restaurado automaticamente.
+Arquivo **.vscode/tasks.json** (já incluso no projeto):
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Sincronizar novo script",
+      "type": "shell",
+      "osx":   { "command": "./src/run_sync.sh" },
+      "linux": { "command": "./src/run_sync.sh" },
+      "windows": { "command": ".\\\\src\\\\run_sync_windows.cmd" },
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
+```
 
-**Atalho opcional** (por usuário): adicione em `keybindings.json`:
+**Atalho opcional** (arquivo **.vscode/keybindings.json** local do usuário):
 ```json
 [
   {
@@ -236,56 +199,34 @@ password = secret
 ]
 ```
 
-### Terminal (manual)
+---
 
-**macOS/Linux:**
-```bash
-./src/run_sync.sh
-```
+## Execução manual (sem VS Code)
 
-**Windows (Prompt):**
-```bat
-.\src\run_sync_windows.cmd
-```
+- **macOS / Linux**
+  ```bash
+  cd Sync_Scrips
+  ./src/run_sync.sh
+  ```
+
+- **Windows**
+  ```bat
+  cd Sync_Scrips
+  .\src\run_sync_windows.cmd
+  ```
 
 ---
 
-## 🧠 Regras de nomeação e conteúdo
+## Dicas e solução de problemas
 
-- Arquivos são numerados como `NNNN.0.GXX.sql` (Gestor) ou `NNNN.0.SXX.sql` (Supervisor).  
-  - `NNNN` = sequencial de 4 dígitos no diretório correspondente.  
-  - `G`/`S` = sistema.  
-  - `XX` = suas iniciais (2 letras) vindas de `config.ini` → `[user].initials`.
-- O **ID do script** (sem `.sql`) é usado nas funções:
-  - `select * from sistema.fn_verifica_script('<ID>');`
-  - `select * from sistema.fn_atualiza_script('<ID>');`
-- O arquivo tratado é salvo em **ANSI (cp1252)** para compatibilidade com ferramentas legadas.
-- O “splitter” entende **DO $$ ... $$**, strings, comentários, *dollar‑quotes*, e evita **separadores duplicados vazios**.
+- **Falhou em algum passo?** O pipeline chama `restore_backups.py` e restaura o `gestor.sql/supervisor.sql` original se o commit não ocorreu.
+- **Separadores duplicados** não são gerados; o pré-processamento evita `END OFF COMMAND` seguidos sem conteúdo.
+- **SVN com proxy**: o fluxo usa uma configuração “no-proxy” dentro de `src/.svnconfig_noproxy` para evitar interferência de proxy corporativo em redes locais.
+- **psycopg**: usamos `psycopg[binary]` (psycopg3) para evitar dependências de `pg_config`/compilação local.
+- **Ambiente virtual (`.venv`)**: recomendado manter na raiz do projeto para isolar dependências.
+- **Compatibilidade**: scripts testados em macOS (zsh/bash) e Windows 11 (cmd.exe).
 
 ---
 
-## 🔁 Rollback automático
-
-- Antes de sobrescrever `gestor.sql`/`supervisor.sql`, é criado um **backup** em `src/.preprocess_backup/` e registrado em `pending.txt`.  
-- Se a pipeline falhar, `src/restore_backups.py` restaura o arquivo original da raiz.  
-- Após **commit** bem‑sucedido, os registros de backup são limpos.
-
-Você também pode restaurar manualmente:
-```bash
-python3 src/restore_backups.py
-```
-
----
-
-## 🧭 Dicas
-
-- **Compartilhamento do projeto**: você pode versionar `.vscode/tasks.json` (cross‑platform). O `keybindings.json` é tipicamente por usuário.  
-- **Proxy**: a pasta `src/.svnconfig_noproxy/` é gerada automaticamente para ignorar proxy em sub-redes locais.  
-- **Erros de build do driver**: use **`psycopg[binary]`** (evita depender de `pg_config`).  
-- **SVN**: credenciais do repositório devem ser solicitadas ao **administrador**.
-
----
-
-## 📜 Licença
-
-Este projeto é disponibilizado “como está”, voltado para automações internas. Ajuste conforme sua realidade e políticas de segurança.
+## Licença
+Este repositório contém automações internas; verifique a política da sua organização antes de redistribuir.
