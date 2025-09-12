@@ -53,22 +53,58 @@ def load_config():
     return author, initials
 
 def get_local_ip():
-    # macOS: tenta en0/en1; cai para socket se não achar
-    for iface in ("en0", "en1"):
-        try:
-            out = subprocess.run(["ipconfig", "getifaddr", iface], text=True, capture_output=True)
-            ip = (out.stdout or "").strip()
-            if ip:
-                return ip
-        except Exception:
-            pass
+    # 1) Tenta via socket (funciona na maioria dos casos e é cross-platform)
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]; s.close()
-        return ip
+        ip = s.getsockname()[0]
+        s.close()
+        if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
+            return ip
     except Exception:
-        return "0.0.0.0"
+        pass
+
+    # 2) Fallback por SO
+    if os.name == "nt":
+        # Windows: parseia "ipconfig" e pega o primeiro "IPv4..."
+        try:
+            out = subprocess.run(
+                ["ipconfig"],
+                text=True,
+                capture_output=True,
+                encoding="cp1252",   # evita lixo de encoding no PT-BR
+                errors="ignore"
+            )
+            m = re.search(r'IPv4[^:\n]*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)', out.stdout)
+            if m:
+                return m.group(1)
+        except Exception:
+            pass
+
+    elif sys.platform == "darwin":
+        # macOS: tenta en0/en1 como antes
+        for iface in ("en0", "en1"):
+            try:
+                out = subprocess.run(["ipconfig", "getifaddr", iface], text=True, capture_output=True)
+                ip = (out.stdout or "").strip()
+                if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
+                    return ip
+            except Exception:
+                pass
+
+    else:
+        # Linux/Outros: tenta hostname -I (primeiro IPv4)
+        try:
+            out = subprocess.run(["hostname", "-I"], text=True, capture_output=True)
+            tokens = (out.stdout or "").strip().split()
+            for tk in tokens:
+                if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', tk):
+                    return tk
+        except Exception:
+            pass
+
+    # 3) Último recurso
+    return "0.0.0.0"
 
 def detect_system_and_letter(src: Path):
     name = src.name.lower()
@@ -260,9 +296,11 @@ def build_output(script_id: str, final_name_with_ext: str, sistema: str, author:
             wrote_since_sep = False
 
     # Cabeçalho
+    add("/*")
     add(f"--#AUTOR...: {author}")
     add(f"--#DATA....: {now} - IP: {ip}")
     add(f"--#SISTEMA.: {sistema}")
+    add("*/")
     add("")
     # Verificação inicial (sem .sql)
     add(f"select * from sistema.fn_verifica_script('{script_id}');")
