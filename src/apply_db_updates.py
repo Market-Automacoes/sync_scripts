@@ -8,16 +8,20 @@ Estrutura do projeto:
   ├─ config.ini
   ├─ gestor.sql / supervisor.sql          (arquivos tratados pelo preprocess)
   └─ src/
-     ├─ .target_gestor.txt / .target_supervisor.txt
      ├─ Scripts/
      │  ├─ Gestor/                        (scripts versionados)
      │  └─ Supervisor/
      └─ apply_db_updates.py               (este arquivo)
 
 Fluxo por sistema presente (gestor.sql e/ou supervisor.sql):
- 1) Traz TEST e DEV até a última versão disponível em Scripts/<Sistema> (aplica pendentes).
- 2) Executa o NOVO script tratado completo em TEST.
- 3) Executa apenas: select * from sistema.fn_atualiza_script('<NOME>') em DEV (sem “.sql”).
+ 1) Traz TEST e DEV até a última versão disponível em Scripts/<Sistema> (aplica pendentes),
+    sempre consultando as bases com:
+        select nm_arquivo
+          from sistema.tb_sys_controle_versao
+         order by nr_versao_banco desc
+         limit 1
+ 2) Executa o NOVO script tratado completo em TEST (conteúdo do arquivo da raiz).
+ 3) Executa somente: select * from sistema.fn_atualiza_script('<ID>') em DEV (sem “.sql”).
 
 Sai com código != 0 se algo falhar.
 """
@@ -39,19 +43,9 @@ GESTOR_DIR   = SCRIPTS_DIR / "Gestor"
 SUPERV_DIR   = SCRIPTS_DIR / "Supervisor"
 CONFIG_PATH  = PROJECT_ROOT / "config.ini"            # config.ini na raiz
 
-TARGETS = [
-    {
-        "system":   "gestor",
-        "src_path": PROJECT_ROOT / "gestor.sql",
-        "sidecar":  THIS_DIR / ".target_gestor.txt",
-        "base_dir": GESTOR_DIR,
-    },
-    {
-        "system":   "supervisor",
-        "src_path": PROJECT_ROOT / "supervisor.sql",
-        "sidecar":  THIS_DIR / ".target_supervisor.txt",
-        "base_dir": SUPERV_DIR,
-    },
+SYSTEMS = [
+    {"system": "gestor",     "src_path": PROJECT_ROOT / "gestor.sql",     "base_dir": GESTOR_DIR},
+    {"system": "supervisor", "src_path": PROJECT_ROOT / "supervisor.sql", "base_dir": SUPERV_DIR},
 ]
 
 # =================== Utilidades ===================
@@ -113,7 +107,6 @@ def connect_db(pg, cfg: dict):
             host=cfg["host"], port=cfg["port"],
             dbname=cfg["dbname"], user=cfg["user"], password=cfg["password"]
         )
-        # psycopg3 e psycopg2: autocommit False por padrão; torna explícito:
         try:
             conn.autocommit = False
         except Exception:
@@ -122,6 +115,7 @@ def connect_db(pg, cfg: dict):
     except Exception as e:
         die(f"Falha ao conectar em {cfg['host']}:{cfg['port']}/{cfg['dbname']} - {e}")
 
+# seq de nomes tipo NNNN.0.GXX ou NNNN.0.SXX
 SEQ_RE = re.compile(r'(\d{4})\.0\.[GS][A-Za-z]{2}')
 
 def parse_seq_from_name(name: str) -> int:
@@ -209,6 +203,7 @@ def apply_full_script_text(conn, text: str, label: str):
 def apply_pending_repo_scripts(conn, base_dir: Path, sys_label: str):
     """
     Atualiza a base executando scripts pendentes do diretório correspondente.
+    Usa SEMPRE o último script aplicado consultando a base.
     """
     current_seq, current_name = get_last_applied_seq(conn)
     repo = list_repo_scripts_for_dir(base_dir)
@@ -220,28 +215,40 @@ def apply_pending_repo_scripts(conn, base_dir: Path, sys_label: str):
     for seq, path, name in pend:
         apply_full_script_file(conn, path)
 
-def load_new_targets():
+def extract_script_id_from_text(text: str) -> str:
     """
-    Lê alvos gerados pelo preprocess:
-      src/.target_gestor.txt     + <raiz>/gestor.sql
-      src/.target_supervisor.txt + <raiz>/supervisor.sql
-    Retorna lista: {system, target_name, content, base_dir}
+    Lê o ID do novo script diretamente do conteúdo do arquivo
+    procurando:  fn_verifica_script('<ID>')
+    Retorna o ID sem “.sql”.
+    """
+    m = re.search(r"fn_verifica_script\(\s*'([^']+)'\s*\)", text, flags=re.IGNORECASE)
+    if not m:
+        die("Não foi possível encontrar fn_verifica_script('<ID>') no novo arquivo.")
+    script_id = m.group(1).strip()
+    script_id = re.sub(r"\.sql$", "", script_id, flags=re.IGNORECASE)
+    if not SEQ_RE.search(script_id):
+        die(f"ID de script inválido: '{script_id}'. Esperado algo como 'NNNN.0.GXX' ou 'NNNN.0.SXX'.")
+    return script_id
+
+def load_new_inputs():
+    """
+    Lê os possíveis novos scripts diretamente dos arquivos na RAIZ
+    (gestor.sql e/ou supervisor.sql), sem depender de sidecars.
+    Retorna lista: {system, script_id, content, base_dir}
     """
     results = []
-    for t in TARGETS:
-        side_path = t["sidecar"]
-        src_path  = t["src_path"]
-        if side_path.exists() and src_path.exists():
-            target_name = side_path.read_text(encoding="utf-8").strip()
-            # preprocess salva ANSI (cp1252)
-            content = read_text_auto(src_path)
-            results.append(dict(system=t["system"], target_name=target_name,
-                                content=content, base_dir=t["base_dir"]))
+    for t in SYSTEMS:
+        src_path = t["src_path"]
+        if src_path.exists():
+            content = read_text_auto(src_path)  # ANSI/cp1252 preferido
+            script_id = extract_script_id_from_text(content)
+            results.append(dict(system=t["system"], script_id=script_id,
+                                content=content, base_dir=t["base_dir"] ))
     return results
 
 # =================== Pipeline principal ===================
 
-def process_for_system(pg, cfg: ConfigParser, system: str, target_name: str, content: str, base_dir: Path):
+def process_for_system(pg, cfg: ConfigParser, system: str, script_id: str, content: str, base_dir: Path):
     # Lê par de conexões do sistema
     test_cfg, dev_cfg = load_db_pair(cfg, system)
 
@@ -259,10 +266,9 @@ def process_for_system(pg, cfg: ConfigParser, system: str, target_name: str, con
     apply_pending_repo_scripts(dev_conn, base_dir, f"{sys_label}/DEV ")
 
     # 2) Executar NOVO script completo em TEST
-    apply_full_script_text(test_conn, content, f"NOVO({target_name})@{sys_label}/TEST")
+    apply_full_script_text(test_conn, content, f"NOVO({script_id})@{sys_label}/TEST")
 
-    # 3) Executar SOMENTE fn_atualiza_script('<NOME>') em DEV (sem .sql)
-    script_id = re.sub(r'\.sql$', '', target_name, flags=re.IGNORECASE)
+    # 3) Executar SOMENTE fn_atualiza_script('<ID>') em DEV (sem .sql)
     stmt = f"select * from sistema.fn_atualiza_script('{script_id}');"
     try:
         with dev_conn.cursor() as cur:
@@ -282,15 +288,15 @@ def main():
     pg, ver = get_db_driver()
     print(f"[INFO] Usando driver: {'psycopg3' if ver == 3 else 'psycopg2'}")
 
-    # Carrega os novos alvos (cada sistema independente)
-    targets = load_new_targets()
-    if not targets:
-        print("[INFO] Nenhum novo arquivo tratado encontrado (src/.target_*.txt e gestor.sql/supervisor.sql na raiz).")
+    # Carrega os novos scripts diretamente dos arquivos da RAIZ
+    inputs = load_new_inputs()
+    if not inputs:
+        print("[INFO] Nenhum novo arquivo tratado encontrado (gestor.sql/supervisor.sql na raiz).")
         return
 
     # Processa cada sistema separadamente
-    for t in targets:
-        process_for_system(pg, cfg, t["system"], t["target_name"], t["content"], t["base_dir"])
+    for item in inputs:
+        process_for_system(pg, cfg, item["system"], item["script_id"], item["content"], item["base_dir"])
 
     print("[OK] apply_db_updates finalizado com sucesso.")
 

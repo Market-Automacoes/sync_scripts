@@ -24,6 +24,54 @@
         "clear": true
       },
       "problemMatcher": []
+    },
+    {
+      "label": "Novo script gestor",
+      "type": "shell",
+      "osx":   { "command": "test -f ./gestor.sql || printf '' > ./gestor.sql; code -g ./gestor.sql" },
+      "linux": { "command": "test -f ./gestor.sql || printf '' > ./gestor.sql; code -g ./gestor.sql" },
+      "windows": {
+        "command": "if not exist .\\gestor.sql (type NUL > .\\gestor.sql) & code -g .\\gestor.sql",
+        "options": {
+          "shell": {
+            "executable": "C:\\Windows\\System32\\cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Novo script supervisor",
+      "type": "shell",
+      "osx":   { "command": "test -f ./supervisor.sql || printf '' > ./supervisor.sql; code -g ./supervisor.sql" },
+      "linux": { "command": "test -f ./supervisor.sql || printf '' > ./supervisor.sql; code -g ./supervisor.sql" },
+      "windows": {
+        "command": "if not exist .\\supervisor.sql (type NUL > .\\supervisor.sql) & code -g .\\supervisor.sql",
+        "options": {
+          "shell": {
+            "executable": "C:\\Windows\\System32\\cmd.exe",
+            "args": ["/d", "/c"]
+          }
+        }
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
     }
   ]
 }
