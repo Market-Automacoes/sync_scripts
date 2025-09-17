@@ -195,9 +195,21 @@ def run(cmd, cwd=None, check=True, capture=False, env=None):
     return res
 
 def svn_opts_base(username: str, password: str, cfg_dir: Path):
-    return ["--non-interactive", "--config-dir", str(cfg_dir)] + (
-        ["--username", username] if username else []
-    ) + (["--password", password, "--no-auth-cache"] if password else [])
+    """
+    Opções globais do SVN, incluindo confiança no certificado HTTPS em modo
+    não interativo (autoassinado, CN diferente, expirado, etc.).
+    """
+    opts = [
+        "--non-interactive",
+        "--config-dir", str(cfg_dir),
+        "--trust-server-cert",
+        "--trust-server-cert-failures", "unknown-ca,cn-mismatch,expired,not-yet-valid,other",
+    ]
+    if username:
+        opts += ["--username", username]
+    if password:
+        opts += ["--password", password, "--no-auth-cache"]
+    return opts
 
 def next_seq_for(folder: Path, letter: str) -> int:
     """
@@ -232,8 +244,7 @@ def svn_add_if_wc(path: Path, username: str, password: str, cfg_dir: Path, env: 
     if is_wc(SCRIPTS_DIR):
         # Rodamos dentro de src/Scripts/ para que os caminhos fiquem relativos
         rel = path.relative_to(SCRIPTS_DIR)
-        run(["svn", "add", "--force", str(rel),
-             *svn_opts_base(username, password, cfg_dir)],
+        run(["svn", "add", "--force", str(rel), *svn_opts_base(username, password, cfg_dir)],
             cwd=SCRIPTS_DIR, check=False, env=env)
 
 def svn_commit_if_changes(username: str, password: str, cfg_dir: Path, env: dict) -> bool:
@@ -245,10 +256,13 @@ def svn_commit_if_changes(username: str, password: str, cfg_dir: Path, env: dict
         print("ℹ️ Pasta src/Scripts não é uma working copy SVN. Pulando commit.")
         return False
 
-    st = subprocess.run(["svn", "status", "--config-dir", str(cfg_dir)],
-                        cwd=SCRIPTS_DIR, text=True, env=env,
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    changes = [ln for ln in st.stdout.splitlines() if ln[:1] in {"A", "M", "D", "R", "!"}]
+    # Usa as mesmas opções (com confiança de certificado) também no status.
+    st = subprocess.run(
+        ["svn", "status", *svn_opts_base(username, password, cfg_dir)],
+        cwd=SCRIPTS_DIR, text=True, env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+    )
+    changes = [ln for ln in (st.stdout or "").splitlines() if ln[:1] in {"A", "M", "D", "R", "!"}]
     if not changes:
         print("ℹ️ Nenhuma alteração para commitar.")
         return False

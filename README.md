@@ -142,7 +142,7 @@ Sync_Scripts/
 
 ```ini
 [svn]
-url = http://192.168.60.160/svn/repo/Scripts
+url = https://192.168.60.160/svn/repo/Scripts
 
 [auth]
 svn_username = Nome
@@ -210,7 +210,8 @@ password = senha
 - **Windows (PowerShell)**
   ```powershell
   .\.venv\Scripts\Activate.ps1
-  .\srcun_sync_windows.cmd
+  .\src
+un_sync_windows.cmd
   ```
 
 ---
@@ -254,5 +255,6 @@ password = senha
 
   # Windows (PowerShell)
   .\.venv\Scripts\Activate.ps1
-  python .\srcestore_backups.py
+  python .\src
+estore_backups.py
   ```
