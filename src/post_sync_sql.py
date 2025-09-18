@@ -50,6 +50,44 @@ CREATED_FILES: list[Path] = []  # coletar criados para mensagem de commit
 
 # ======================== BACKUP HELPERS ========================
 
+def _clean_cstyle_header_markers(content_bytes: bytes) -> bytes:
+    """
+    Remove apenas os marcadores C-style '/*' e '*/' do CABEÇALHO,
+    mantendo as linhas que começam com '--#...'.
+    Não mexe no restante do arquivo.
+    """
+    # tenta cp1252 primeiro (mantém ANSI), depois fallbacks só pra leitura
+    for enc in ("cp1252", "utf-8", "latin-1"):
+        try:
+            text = content_bytes.decode(enc)
+            read_enc = enc
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        # último recurso
+        text = content_bytes.decode("utf-8", errors="replace")
+        read_enc = "utf-8"
+
+    # Delimita o cabeçalho até a 1ª chamada de fn_verifica_script (para não
+    # remover '/* ... */' que por acaso exista em outras partes do script)
+    mark = re.search(r"fn_verifica_script\s*\(", text, flags=re.IGNORECASE)
+    if mark:
+        head = text[:mark.start()]
+        tail = text[mark.start():]
+    else:
+        # se não achar, considera arquivo todo como "head" por segurança mínima
+        head, tail = text, ""
+
+    # No cabeçalho, trocamos somente os marcadores '/*' e '*/' por espaço
+    # (evita que Python/psql entendam como bloco de comentário estranho)
+    head_clean = head.replace("/*", " ").replace("*/", " ")
+
+    cleaned = head_clean + tail
+    # volta para cp1252 para preservar o padrão ANSI (com substituição se precisar)
+    return cleaned.encode("cp1252", errors="replace")
+
+
 def _load_pending_entries():
     """
     Lê o pending.txt no formato 'orig_abs_path|backup_abs_path' por linha.
@@ -297,6 +335,9 @@ def process_role(src_path: Path, dest_folder: Path, letter: str, initials: str,
 
     # LEITURA EM BINÁRIO para preservar ANSI (cp1252)
     content_bytes = src_path.read_bytes()
+
+    # LIMPA APENAS OS MARCADORES C-STYLE DO CABEÇALHO 
+    content_bytes = _clean_cstyle_header_markers(content_bytes)
 
     created = write_file_bytes(dest_folder, letter, initials, content_bytes)
     svn_add_if_wc(created, username, password, cfg_dir, env)
