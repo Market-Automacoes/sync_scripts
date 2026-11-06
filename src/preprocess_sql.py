@@ -116,7 +116,7 @@ def detect_system_and_letter(src: Path):
     sys.exit(2)
 
 def next_seq_for(folder: Path, letter: str) -> int:
-    pat = re.compile(rf"^(\d{{4}})\.0\.{letter}[A-Za-z]{{2}}\.sql$")
+    pat = re.compile(rf"^(\d{{4,}})\.0\.{letter}[A-Za-z]{{2}}\.sql$")
     max_n = 0
     if folder.exists():
         for name in os.listdir(folder):
@@ -357,6 +357,9 @@ def process_one(src: Path, author: str, initials: str):
     # backup antes de sobrescrever (em src/.preprocess_backup)
     make_backup(src)
 
+    # Remove a cláusula em linha própria antes de testar e versionar o novo SQL.
+    raw = re.sub(r"^[ \t]*PARALLEL[ \t]+UNSAFE[ \t]*(?:\r?\n|$)", "", raw,
+                 flags=re.IGNORECASE | re.MULTILINE)
     stmts = split_sql(raw)
     out   = build_output(script_id, final_name, sistema, author, stmts)
 

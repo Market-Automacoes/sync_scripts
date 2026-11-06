@@ -11,7 +11,7 @@ Automatiza a criação, validação e versionamento de **scripts SQL** para os s
 1. Você cria **um arquivo na raiz** do projeto:
    - `gestor.sql` → gera um script numerado em `src/Scripts/Gestor/NNNN.0.GXX.sql`
    - `supervisor.sql` → gera um script numerado em `src/Scripts/Supervisor/NNNN.0.SXX.sql`  
-     (onde `NNNN` é sequencial e `XX` são suas iniciais)
+     (onde `NNNN` é sequencial, com no mínimo quatro dígitos e sem limite fixo de casas, e `XX` são suas iniciais)
 
 2. Ao rodar a automação:
    - **Sincroniza** a pasta `src/Scripts` com o repositório SVN.
@@ -219,6 +219,7 @@ un_sync_windows.cmd
 ## Observações importantes
 
 - Os scripts tratados são salvos em **ANSI (cp1252)** para compatibilidade com os ambientes-alvo.
+- Linhas contendo apenas `PARALLEL UNSAFE` são removidas dos novos scripts, inclusive com indentação ou letras minúsculas.
 - As chamadas de versão **não incluem `.sql`** (ex.: `select * from sistema.fn_verifica_script('9342.0.GJO');`).
 - A pasta `src/.svnconfig_noproxy/` é criada automaticamente para garantir que o cliente SVN **não use proxy** ao acessar a LAN (ex.: `192.168.*`).
 - A pasta `src/Scripts/` é a **working copy** do SVN e **é ignorada** no Git (baixada do servidor SVN).

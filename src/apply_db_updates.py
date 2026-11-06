@@ -115,8 +115,8 @@ def connect_db(pg, cfg: dict):
     except Exception as e:
         die(f"Falha ao conectar em {cfg['host']}:{cfg['port']}/{cfg['dbname']} - {e}")
 
-# seq de nomes tipo NNNN.0.GXX ou NNNN.0.SXX
-SEQ_RE = re.compile(r'(\d{4})\.0\.[GS][A-Za-z]{2}')
+# seq de nomes tipo NNNN.0.GXX ou NNNN.0.SXX, com 4 ou mais dígitos
+SEQ_RE = re.compile(r'(\d{4,})\.0\.[GS][A-Za-z]{2}')
 
 def parse_seq_from_name(name: str) -> int:
     m = SEQ_RE.search(name)
@@ -147,7 +147,7 @@ def list_repo_scripts_for_dir(base_dir: Path):
     padrão NNNN.0.[GS]XX.sql
     Retorna lista de tuplas (seq, path, name) ordenadas por seq.
     """
-    pat = re.compile(r'^(\d{4})\.0\.[GS][A-Za-z]{2}\.sql$')
+    pat = re.compile(r'^(\d{4,})\.0\.[GS][A-Za-z]{2}\.sql$')
     items = []
     if base_dir.exists():
         for name in os.listdir(base_dir):

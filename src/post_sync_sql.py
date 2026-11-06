@@ -251,10 +251,10 @@ def svn_opts_base(username: str, password: str, cfg_dir: Path):
 
 def next_seq_for(folder: Path, letter: str) -> int:
     """
-    Arquivos no formato: NNNN.0.<letter><XX>.sql
+    Arquivos no formato: NNNN.0.<letter><XX>.sql (sequência com 4 ou mais dígitos)
     Ex.: 9341.0.GJO.sql  -> letter='G'
     """
-    pat = re.compile(rf"^(\d{{4}})\.0\.{letter}[A-Za-z]{{2}}\.sql$")
+    pat = re.compile(rf"^(\d{{4,}})\.0\.{letter}[A-Za-z]{{2}}\.sql$")
     max_n = 0
     if folder.exists():
         for name in os.listdir(folder):
